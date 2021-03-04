@@ -2,7 +2,6 @@
   "name": "open-terminal",
   "version": "0.1.0",
   "description": "cross platform open terminal and run command",
-  "private": true,
   "sideEffects": false,
   "keywords": [
     "open-terminal",
