@@ -1,66 +1,129 @@
 {
   "name": "open-terminal",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "cross platform open terminal and run command",
+  "private": true,
+  "sideEffects": false,
   "keywords": [
     "open-terminal",
-    "terminal",
     "open",
-    "command",
-    "script",
-    "child-process",
-    "spawn"
+    "terminal",
+    "cross",
+    "platform"
   ],
-  "homepage": "https://github.com/codejamninja/open-terminal",
+  "homepage": "https://github.com/clayrisser/open-terminal",
   "bugs": {
-    "url": "https://github.com/codejamninja/open-terminal/issues",
-    "email": "jam@codejam.ninja"
+    "url": "https://github.com/clayrisser/open-terminal/issues",
+    "email": "email@clayrisser.com"
   },
   "license": "MIT",
   "author": {
-    "name": "Jam Risser",
-    "email": "jam@codejam.ninja",
-    "url": "https://codejam.ninja"
+    "name": "Clay Risser",
+    "email": "email@clayrisser.com",
+    "url": "https://clayrisser.com"
   },
   "files": [
-    "lib"
+    "es",
+    "lib",
+    "bin"
   ],
+  "module": "es/index.js",
   "main": "lib/index.js",
+  "bin": {
+    "open-terminal": "bin/openTerminal.js"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/codejamninja/open-terminal"
+    "url": "https://github.com/clayrisser/open-terminal"
   },
   "scripts": {
-    "build": "babel src -d lib",
-    "clean": "rimraf lib",
-    "lint": "npm run format && eslint ./",
-    "lint:fix": "npm run format && eslint --fix ./",
-    "format": "prettier --write ./src/**/*.js",
-    "prepublish": "npm run clean && npm run build",
-    "start": "babel-node examples/hello-world"
+    "build": "make -s build",
+    "clean": "make -s clean",
+    "coverage": "make -s coverage",
+    "format": "make -s format",
+    "inc": "make -s inc",
+    "lint": "make -s lint",
+    "make": "make",
+    "prepare": "make -s prepare",
+    "purge": "make -s purge",
+    "report": "make -s report",
+    "spellcheck": "make -s spellcheck",
+    "start": "make -s start",
+    "test": "make -s test",
+    "test:ui": "make test-ui",
+    "test:watch": "make -s test-watch"
   },
   "dependencies": {
-    "cross-spawn": "^6.0.5",
-    "js-info": "^0.3.0"
+    "@babel/runtime": "^7.13.9",
+    "core-js": "^3.9.1",
+    "execa": "^5.0.0",
+    "ora": "^5.3.0"
   },
   "devDependencies": {
-    "@babel/cli": "^7.0.0",
-    "@babel/core": "^7.0.0",
-    "@babel/node": "^7.0.0",
-    "@babel/preset-env": "^7.0.0",
-    "babel-core": "7.0.0-bridge.0",
-    "babel-eslint": "^9.0.0",
-    "babel-preset-everything": "^0.1.2",
-    "eslint": "^5.5.0",
-    "eslint-config-jam": "^0.1.2",
-    "eslint-plugin-jsx-a11y": "^6.1.1",
-    "eslint-plugin-react": "^7.11.1",
-    "rimraf": "^2.6.2"
+    "@babel/cli": "^7.13.0",
+    "@babel/core": "^7.13.8",
+    "@babel/node": "^7.13.0",
+    "@babel/plugin-proposal-class-properties": "^7.13.0",
+    "@babel/plugin-proposal-decorators": "^7.13.5",
+    "@babel/plugin-proposal-optional-chaining": "^7.13.8",
+    "@babel/plugin-transform-runtime": "^7.13.9",
+    "@babel/preset-env": "^7.13.9",
+    "@babel/preset-typescript": "^7.13.0",
+    "@types/jest": "^26.0.20",
+    "@typescript-eslint/eslint-plugin": "^4.16.1",
+    "@typescript-eslint/parser": "^4.16.1",
+    "babel-loader": "^8.2.2",
+    "babel-plugin-inline-import": "^3.0.0",
+    "babel-plugin-macros": "^3.0.1",
+    "babel-plugin-module-resolver": "^4.1.0",
+    "babel-plugin-transform-typescript-metadata": "^0.3.1",
+    "cloc": "^2.7.0",
+    "cspell": "^5.3.4",
+    "eslint": "^7.21.0",
+    "eslint-config-airbnb-typescript": "^12.3.1",
+    "eslint-config-prettier": "^8.1.0",
+    "eslint-plugin-import": "^2.22.1",
+    "eslint-plugin-spellcheck": "^0.0.17",
+    "jest": "^26.6.3",
+    "jest-sonar-reporter": "^2.0.0",
+    "lockfile-lint": "^4.6.2",
+    "majestic": "^1.8.0",
+    "prettier": "^2.2.1",
+    "typescript": "^4.2.2",
+    "webpack": "^5.24.3",
+    "webpack-cli": "^4.5.0"
   },
   "engines": {
     "node": ">=6.0.0"
   },
   "eslintIgnore": [
+    "dist",
+    "es",
     "lib"
-  ]
+  ],
+  "jest": {
+    "testRegex": "((/(tests|__tests__)((/|/[^_.\n][^/\n]*(/[^_.\n][^/\n]+)*/)[^_.\n][^/\n]*))|((/|/.*/)(([^_.\n][^/\n]*.(spec|test))|(spec|test)))).[jt]sx?$",
+    "testEnvironment": "node",
+    "verbose": true,
+    "testPathIgnorePatterns": [
+      "<rootDir>/dist/",
+      "<rootDir>/es/",
+      "<rootDir>/lib/"
+    ],
+    "transformIgnorePatterns": [
+      "\\.d\\.tsx?$"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/_setup.ts"
+    ]
+  },
+  "jestSonar": {
+    "reportPath": "node_modules/.tmp/reports",
+    "reportFile": "test-report.xml",
+    "indent": 4
+  },
+  "prettier": {
+    "singleQuote": true,
+    "trailingComma": "none"
+  }
 }
