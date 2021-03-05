@@ -18,7 +18,7 @@ export const defaultOptions: Options = {
     ],
     linux: [
       ['terminator', '-e', COMMAND],
-      ['gnome-terminal', '-e', COMMAND],
+      ['gnome-terminal', '--', 'sh', '-c', COMMAND],
       ['xterm', '-e', COMMAND],
       ['konsole', '-e', COMMAND]
     ]
@@ -85,7 +85,10 @@ export async function openTerminal(
       Array.isArray(command) ? command.join(' ') : command
     )
   );
-  const p = execa(cmd, args, { stdio: 'inherit', cwd });
+  const p = execa(cmd, args, {
+    stdio: 'inherit',
+    cwd
+  });
   const result = await p;
   return result;
 }
