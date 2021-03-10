@@ -1,22 +1,22 @@
 import execa, { ExecaError } from 'execa';
 import fs from 'fs-extra';
+import Sigar from 'node-sigar';
+import path from 'path';
 import ora from 'ora';
+import { v4 as uuidv4 } from 'uuid';
 import which from 'which';
 import { Options, Terminals, Terminal } from '~/types';
 
 const COMMAND = '([{<COMMAND>}])';
 const spinner = ora();
+const sigar = new Sigar();
 
 export const defaultOptions: Options = {
   commandTemplate: COMMAND,
   cwd: process.cwd(),
   terminals: {
     darwin: [
-      [
-        'osascript',
-        '-e',
-        `tell application "Terminal" to do script "${COMMAND}"`
-      ]
+      ['osascript', '-e', `tell app "Terminal" to do script "${COMMAND}"`]
     ],
     linux: [
       ['gnome-terminal', '--', `sh -c "${COMMAND}"`],
@@ -39,9 +39,13 @@ export async function getDefaultTerminalCommand(): Promise<string | undefined> {
   }
 }
 
-function createSafeCommand(command: string) {
+function createSafeCommand(uid: string, command: string) {
   const encodedCommand = Buffer.from(command).toString('base64');
-  return `node -e 'process.stdout.write(Buffer.from(\\\`${encodedCommand}\\\`,\\\`base64\\\`))' | sh`;
+  const BACKSLAH = process.platform === 'darwin' ? '' : '\\';
+  return `node -e 'process.stdout.write(Buffer.from(${BACKSLAH}\`${encodedCommand}${BACKSLAH}\`,${BACKSLAH}\`base64${BACKSLAH}\`))' | sh ${path.resolve(
+    __dirname,
+    '../scripts/sh.sh'
+  )} open-terminal:uid:${uid}`;
 }
 
 export async function hasTerminal(terminal: Terminal | string) {
@@ -61,6 +65,7 @@ export default async function openTerminal(
   _terminals?: Terminal[],
   _i = 0
 ) {
+  const uid = uuidv4();
   const fullOptions = mergeDefaults(options);
   if (!_terminals) {
     const terminals = fullOptions.terminals[process.platform];
@@ -74,6 +79,7 @@ export default async function openTerminal(
     });
   }
   const safeCommand = createSafeCommand(
+    uid,
     (Array.isArray(command) ? command : [command]).join(' ')
   );
   const terminal = _terminals[_i];
@@ -96,7 +102,12 @@ try installing on of the following terminals to run correctly: ${_terminals
     return openTerminal(command, options, _terminals, ++_i);
   }
   try {
-    const result = await tryOpenTerminal(terminal, safeCommand, fullOptions);
+    const result = await tryOpenTerminal(
+      uid,
+      terminal,
+      safeCommand,
+      fullOptions
+    );
     if (!result) return openTerminal(command, options, _terminals, ++_i);
     return result;
   } catch (err) {
@@ -109,6 +120,7 @@ try installing on of the following terminals to run correctly: ${_terminals
 }
 
 async function tryOpenTerminal(
+  uid: string,
   terminal: Terminal,
   command: string | string[],
   options?: Options
@@ -129,7 +141,39 @@ async function tryOpenTerminal(
     cwd
   });
   const result = await p;
+  process.on('SIGINT', () => {
+    const pid = uidToPid(uid);
+    if (pid) process.kill(pid);
+    process.exit();
+  });
+  process.on('SIGTERM', () => {
+    const pid = uidToPid(uid);
+    if (pid) process.kill(pid);
+    process.exit();
+  });
+  await waitOnTerminal(uid);
   return result;
+}
+
+export function uidToPid(uid: string) {
+  return sigar.procList.find((pid: number) => {
+    return sigar.getProcArgs(pid).join('').indexOf(uid) > -1;
+  });
+}
+
+export async function waitOnTerminal(
+  uid: string,
+  pollInterval = 3000,
+  timeout?: number
+) {
+  await new Promise((r) => setTimeout(r, pollInterval));
+  const pid = uidToPid(uid);
+  if (!pid) return;
+  return waitOnTerminal(
+    uid,
+    timeout,
+    typeof timeout === 'undefined' ? timeout : timeout - pollInterval
+  );
 }
 
 export function mergeDefaults(options?: Partial<Options>): Options {
