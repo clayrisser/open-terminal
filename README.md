@@ -26,7 +26,7 @@ npm install -g open-terminal
 ### from the terminal
 
 ```sh
-open-terminal "echo 'Hello, world!'"
+open-terminal "echo 'Hello, world!' && tail -f /dev/null"
 ```
 
 ### from the nodejs api
@@ -34,7 +34,7 @@ open-terminal "echo 'Hello, world!'"
 ```js
 import openTerminal from 'open-terminal';
 
-openTerminal("echo 'Hello, world!'");
+openTerminal("echo 'Hello, world!' && tail -f /dev/null");
 ```
 
 ## Support
