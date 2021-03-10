@@ -58,6 +58,9 @@
           "mkdtemp",
           "ora",
           "osascript",
+          "pid",
+          "pstree",
+          "realpath",
           "stdout",
           "terminator",
           "tmpdir"

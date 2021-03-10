@@ -1,6 +1,6 @@
 {
   "name": "open-terminal",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "cross platform open terminal and run command",
   "sideEffects": false,
   "keywords": [
@@ -58,7 +58,8 @@
     "execa": "^5.0.0",
     "fs-extra": "^9.1.0",
     "node-pstree": "^0.0.10",
-    "ora": "^5.3.0"
+    "ora": "^5.3.0",
+    "which": "^2.0.2"
   },
   "devDependencies": {
     "@babel/cli": "^7.13.0",
@@ -72,6 +73,7 @@
     "@babel/preset-typescript": "^7.13.0",
     "@types/fs-extra": "^9.0.8",
     "@types/jest": "^26.0.20",
+    "@types/which": "^2.0.0",
     "@typescript-eslint/eslint-plugin": "^4.16.1",
     "@typescript-eslint/parser": "^4.16.1",
     "babel-loader": "^8.2.2",

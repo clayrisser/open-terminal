@@ -1,12 +1,11 @@
 import execa, { ExecaError } from 'execa';
 import fs from 'fs-extra';
 import ora from 'ora';
-import os from 'os';
-import path from 'path';
+import which from 'which';
 import { Options, Terminals, Terminal } from '~/types';
 
-const spinner = ora();
 const COMMAND = '([{<COMMAND>}])';
+const spinner = ora();
 
 export const defaultOptions: Options = {
   commandTemplate: COMMAND,
@@ -20,67 +19,90 @@ export const defaultOptions: Options = {
       ]
     ],
     linux: [
-      ['terminator', '-e', `sh -c "${COMMAND}"`]
-      //   ['gnome-terminal', '--', `sh -c "${COMMAND}"`],
-      //     ['xterm', '-e', `sh -c "${COMMAND}"`],
-      //      ['konsole', '-e', `sh -c "${COMMAND}"`]
+      ['gnome-terminal', '--', `sh -c "${COMMAND}"`],
+      ['xterm', '-e', `sh -c "${COMMAND}"`],
+      ['konsole', '-e', `sh -c "${COMMAND}"`],
+      ['terminator', '-u', '-e', `sh -c "${COMMAND}"`]
     ]
   }
 };
 
+export async function getDefaultTerminalCommand(): Promise<string | undefined> {
+  try {
+    const REGEX = /[^/]+$/g;
+    const terminalPath = await fs.realpath(await which('x-terminal-emulator'));
+    const command = [...(terminalPath.match(REGEX) || [])]?.[0];
+    return command;
+  } catch (err) {
+    if (err.message.indexOf('not found') > -1) return undefined;
+    throw err;
+  }
+}
+
+function createSafeCommand(command: string) {
+  const encodedCommand = Buffer.from(command).toString('base64');
+  return `node -e 'process.stdout.write(Buffer.from(\\\`${encodedCommand}\\\`,\\\`base64\\\`))' | sh`;
+}
+
+export async function hasTerminal(terminal: Terminal | string) {
+  const command = Array.isArray(terminal) ? terminal?.[0] || '' : terminal;
+  try {
+    await which(command);
+    return true;
+  } catch (err) {
+    if (err.message.indexOf('not found') > -1) return false;
+    throw err;
+  }
+}
+
 export default async function openTerminal(
   command: string | string[],
   options?: Partial<Options>,
+  _terminals?: Terminal[],
   _i = 0
 ) {
   const fullOptions = mergeDefaults(options);
-  const terminals = fullOptions.terminals[process.platform];
-  if (!terminals) {
-    throw new Error(`operating system ${process.platform} not supported`);
+  if (!_terminals) {
+    const terminals = fullOptions.terminals[process.platform];
+    if (!terminals) {
+      throw new Error(`operating system ${process.platform} not supported`);
+    }
+    const defaultTerminalCommand = await getDefaultTerminalCommand();
+    _terminals = terminals.sort((a: Terminal) => {
+      if ((a[0] || '').indexOf(defaultTerminalCommand || '') > -1) return -1;
+      return 1;
+    });
   }
-  const terminal = terminals[_i];
-  const tmpPath = await fs.mkdtemp(`${os.tmpdir()}/`);
-  const scriptPath = path.resolve(tmpPath, 'script.sh');
-  await fs.mkdirs(tmpPath);
-  console.log('command', command);
-  await fs.writeFile(
-    scriptPath,
-    `#!/bin/sh
-${Array.isArray(command) ? command.join(' ') : command}`
+  const safeCommand = createSafeCommand(
+    (Array.isArray(command) ? command : [command]).join(' ')
   );
+  const terminal = _terminals[_i];
   if (!terminal) {
     spinner.warn(
       `running process in background because terminal could not be found
-try installing on of the following terminals to run correctly: ${terminals
+try installing on of the following terminals to run correctly: ${_terminals
         .map((terminal: Terminal) => terminal[0])
         .join(', ')}
 `
     );
-    try {
-      const result = await execa('sh', [scriptPath], {
-        cwd: fullOptions.cwd,
-        stdio: 'inherit'
-      });
-      await fs.remove(tmpPath);
-      return result;
-    } catch (err) {
-      await fs.remove(tmpPath);
-      throw err;
-    }
+    const result = await execa(safeCommand, {
+      cwd: fullOptions.cwd,
+      shell: true,
+      stdio: 'inherit'
+    });
+    return result;
+  }
+  if (!(await hasTerminal(terminal))) {
+    return openTerminal(command, options, _terminals, ++_i);
   }
   try {
-    const result = await tryOpenTerminal(
-      terminal,
-      ['sh', scriptPath],
-      fullOptions
-    );
-    if (!result) return openTerminal(command, options, ++_i);
+    const result = await tryOpenTerminal(terminal, safeCommand, fullOptions);
+    if (!result) return openTerminal(command, options, _terminals, ++_i);
     return result;
   } catch (err) {
-    await fs.remove(tmpPath);
     const error: ExecaError = err;
     if (error.command && error.failed) {
-      return openTerminal(command, options, ++_i);
+      return openTerminal(command, options, _terminals, ++_i);
     }
     throw err;
   }
@@ -102,8 +124,6 @@ async function tryOpenTerminal(
       Array.isArray(command) ? command.join(' ') : command
     )
   );
-  console.log(fs.readFileSync(command[1]).toString());
-  console.log([cmd, ...args].join(' '));
   const p = execa(cmd, args, {
     stdio: 'inherit',
     cwd
