@@ -168,7 +168,7 @@ export async function waitOnTerminal(
 ) {
   await new Promise((r) => setTimeout(r, pollInterval));
   const pid = uidToPid(uid);
-  if (!pid) return;
+  if (!pid) return undefined;
   return waitOnTerminal(
     uid,
     timeout,

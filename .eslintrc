@@ -59,11 +59,16 @@
           "ora",
           "osascript",
           "pid",
+          "proc",
           "pstree",
           "realpath",
+          "sigar",
           "stdout",
           "terminator",
-          "tmpdir"
+          "tmpdir",
+          "uid",
+          "uuid",
+          "uuidv4"
         ],
         "skipIfMatch": ["http?://[^s]*", "^[-\\w]+/[-\\w\\.]+$"],
         "skipWordIfMatch": [],
