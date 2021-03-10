@@ -27,7 +27,7 @@ export const defaultOptions: Options = {
   }
 };
 
-export async function getDefaultTerminalCommand(): Promise<string | undefined> {
+async function getDefaultTerminalCommand(): Promise<string | undefined> {
   try {
     const REGEX = /[^/]+$/g;
     const terminalPath = await fs.realpath(await which('x-terminal-emulator'));
@@ -48,7 +48,7 @@ function createSafeCommand(uid: string, command: string) {
   )} open-terminal:uid:${uid}`;
 }
 
-export async function hasTerminal(terminal: Terminal | string) {
+async function hasTerminal(terminal: Terminal | string) {
   const command = Array.isArray(terminal) ? terminal?.[0] || '' : terminal;
   try {
     await which(command);
@@ -60,6 +60,13 @@ export async function hasTerminal(terminal: Terminal | string) {
 }
 
 export default async function openTerminal(
+  command: string | string[],
+  options?: Partial<Options>
+) {
+  return openDefaultTerminal(command, options);
+}
+
+async function openDefaultTerminal(
   command: string | string[],
   options?: Partial<Options>,
   _terminals?: Terminal[],
@@ -99,7 +106,7 @@ try installing on of the following terminals to run correctly: ${_terminals
     return result;
   }
   if (!(await hasTerminal(terminal))) {
-    return openTerminal(command, options, _terminals, ++_i);
+    return openDefaultTerminal(command, options, _terminals, ++_i);
   }
   try {
     const result = await tryOpenTerminal(
@@ -108,12 +115,12 @@ try installing on of the following terminals to run correctly: ${_terminals
       safeCommand,
       fullOptions
     );
-    if (!result) return openTerminal(command, options, _terminals, ++_i);
+    if (!result) return openDefaultTerminal(command, options, _terminals, ++_i);
     return result;
   } catch (err) {
     const error: ExecaError = err;
     if (error.command && error.failed) {
-      return openTerminal(command, options, _terminals, ++_i);
+      return openDefaultTerminal(command, options, _terminals, ++_i);
     }
     throw err;
   }
@@ -155,13 +162,13 @@ async function tryOpenTerminal(
   return result;
 }
 
-export function uidToPid(uid: string) {
+function uidToPid(uid: string) {
   return sigar.procList.find((pid: number) => {
     return sigar.getProcArgs(pid).join('').indexOf(uid) > -1;
   });
 }
 
-export async function waitOnTerminal(
+async function waitOnTerminal(
   uid: string,
   pollInterval = 3000,
   timeout?: number
@@ -176,7 +183,7 @@ export async function waitOnTerminal(
   );
 }
 
-export function mergeDefaults(options?: Partial<Options>): Options {
+function mergeDefaults(options?: Partial<Options>): Options {
   return {
     ...defaultOptions,
     ...(options || {}),
@@ -204,3 +211,5 @@ export function mergeDefaults(options?: Partial<Options>): Options {
     }
   };
 }
+
+export * from '~/types';

@@ -23,12 +23,16 @@ npm install -g open-terminal
 
 ## Usage
 
-Please note that double quotes are not supported at the moment.
+### from the terminal
+```sh
+open-terminal "echo 'Hello, world!'"
+```
 
+### from the nodejs api
 ```js
-import openDefaultTerminal from 'open-terminal';
+import openTerminal from 'open-terminal';
 
-openDefaultTerminal("echo 'Hello, world!'");
+openTerminal("echo 'Hello, world!'");
 ```
 
 ## Support
