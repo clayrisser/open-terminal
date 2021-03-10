@@ -26,7 +26,7 @@
     "import/prefer-default-export": "off",
     "max-classes-per-file": "off",
     "max-lines": ["error", 500],
-    "max-lines-per-function": ["error", 50],
+    "max-lines-per-function": ["error", 80],
     "no-await-in-loop": "off",
     "no-empty-function": ["error", { "allow": ["constructors"] }],
     "no-extra-boolean-cast": "off",
@@ -54,9 +54,13 @@
           "gnome",
           "konsole",
           "linux",
+          "mkdirs",
+          "mkdtemp",
           "ora",
           "osascript",
-          "terminator"
+          "stdout",
+          "terminator",
+          "tmpdir"
         ],
         "skipIfMatch": ["http?://[^s]*", "^[-\\w]+/[-\\w\\.]+$"],
         "skipWordIfMatch": [],

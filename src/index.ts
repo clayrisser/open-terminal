@@ -1,5 +1,8 @@
 import execa, { ExecaError } from 'execa';
+import fs from 'fs-extra';
 import ora from 'ora';
+import os from 'os';
+import path from 'path';
 import { Options, Terminals, Terminal } from '~/types';
 
 const spinner = ora();
@@ -17,15 +20,15 @@ export const defaultOptions: Options = {
       ]
     ],
     linux: [
-      ['terminator', '-e', COMMAND],
-      ['gnome-terminal', '--', 'sh', '-c', COMMAND],
-      ['xterm', '-e', COMMAND],
-      ['konsole', '-e', COMMAND]
+      ['terminator', '-e', `sh -c "${COMMAND}"`]
+      //   ['gnome-terminal', '--', `sh -c "${COMMAND}"`],
+      //     ['xterm', '-e', `sh -c "${COMMAND}"`],
+      //      ['konsole', '-e', `sh -c "${COMMAND}"`]
     ]
   }
 };
 
-export default async function openDefaultTerminal(
+export default async function openTerminal(
   command: string | string[],
   options?: Partial<Options>,
   _i = 0
@@ -36,6 +39,15 @@ export default async function openDefaultTerminal(
     throw new Error(`operating system ${process.platform} not supported`);
   }
   const terminal = terminals[_i];
+  const tmpPath = await fs.mkdtemp(`${os.tmpdir()}/`);
+  const scriptPath = path.resolve(tmpPath, 'script.sh');
+  await fs.mkdirs(tmpPath);
+  console.log('command', command);
+  await fs.writeFile(
+    scriptPath,
+    `#!/bin/sh
+${Array.isArray(command) ? command.join(' ') : command}`
+  );
   if (!terminal) {
     spinner.warn(
       `running process in background because terminal could not be found
@@ -44,32 +56,37 @@ try installing on of the following terminals to run correctly: ${terminals
         .join(', ')}
 `
     );
-    const result = await execa(
-      Array.isArray(command) ? command.join(' ') : command,
-      {
+    try {
+      const result = await execa('sh', [scriptPath], {
         cwd: fullOptions.cwd,
-        shell: true,
         stdio: 'inherit'
-      }
-    );
-    return result;
+      });
+      await fs.remove(tmpPath);
+      return result;
+    } catch (err) {
+      await fs.remove(tmpPath);
+      throw err;
+    }
   }
   try {
-    const result = await openTerminal(terminal, command, fullOptions);
-    if (!result) {
-      return openDefaultTerminal(command, options, ++_i);
-    }
+    const result = await tryOpenTerminal(
+      terminal,
+      ['sh', scriptPath],
+      fullOptions
+    );
+    if (!result) return openTerminal(command, options, ++_i);
     return result;
   } catch (err) {
+    await fs.remove(tmpPath);
     const error: ExecaError = err;
     if (error.command && error.failed) {
-      return openDefaultTerminal(command, options, ++_i);
+      return openTerminal(command, options, ++_i);
     }
     throw err;
   }
 }
 
-export async function openTerminal(
+async function tryOpenTerminal(
   terminal: Terminal,
   command: string | string[],
   options?: Options
@@ -85,6 +102,8 @@ export async function openTerminal(
       Array.isArray(command) ? command.join(' ') : command
     )
   );
+  console.log(fs.readFileSync(command[1]).toString());
+  console.log([cmd, ...args].join(' '));
   const p = execa(cmd, args, {
     stdio: 'inherit',
     cwd
