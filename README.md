@@ -24,11 +24,13 @@ npm install -g open-terminal
 ## Usage
 
 ### from the terminal
+
 ```sh
 open-terminal "echo 'Hello, world!'"
 ```
 
 ### from the nodejs api
+
 ```js
 import openTerminal from 'open-terminal';
 
