@@ -109,14 +109,8 @@ try installing on of the following terminals to run correctly: ${_terminals
     return openDefaultTerminal(command, options, _terminals, ++_i);
   }
   try {
-    const result = await tryOpenTerminal(
-      uid,
-      terminal,
-      safeCommand,
-      fullOptions
-    );
-    if (!result) return openDefaultTerminal(command, options, _terminals, ++_i);
-    return result;
+    await tryOpenTerminal(uid, terminal, safeCommand, fullOptions);
+    return process.exit();
   } catch (err) {
     const error: ExecaError = err;
     if (error.command && error.failed) {
@@ -147,6 +141,8 @@ async function tryOpenTerminal(
     stdio: 'inherit',
     cwd
   });
+  await new Promise((r) => setTimeout(r, 1000));
+  await waitOnTerminal(uid);
   const result = await p;
   process.on('SIGINT', () => {
     const pid = uidToPid(uid);
@@ -158,19 +154,18 @@ async function tryOpenTerminal(
     if (pid) process.kill(pid);
     process.exit();
   });
-  await waitOnTerminal(uid);
   return result;
 }
 
 function uidToPid(uid: string) {
   return sigar.procList.find((pid: number) => {
-    return sigar.getProcArgs(pid).join('').indexOf(uid) > -1;
+    return sigar.getProcArgs(pid).join(' ').indexOf(uid) > -1;
   });
 }
 
 async function waitOnTerminal(
   uid: string,
-  pollInterval = 3000,
+  pollInterval = 1000,
   timeout?: number
 ) {
   await new Promise((r) => setTimeout(r, pollInterval));
