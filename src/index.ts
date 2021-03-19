@@ -162,7 +162,7 @@ function uidToPid(uid: string) {
 
 async function waitOnTerminal(
   uid: string,
-  pollInterval = 1000,
+  pollInterval = 3000,
   timeout?: number
 ) {
   await new Promise((r) => setTimeout(r, pollInterval));
