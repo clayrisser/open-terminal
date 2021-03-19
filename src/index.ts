@@ -40,6 +40,9 @@ async function getDefaultTerminalCommand(): Promise<string | undefined> {
 }
 
 function createSafeCommand(uid: string, command: string) {
+  if (process.platform === 'darwin') {
+    command = `cd ${process.cwd()} && ${command}`;
+  }
   return `node ${path.resolve(__dirname, '../lib/shb64')} ${Buffer.from(
     command
   ).toString('base64')} open-terminal:uid:${uid}`;
