@@ -1,6 +1,6 @@
 {
   "name": "open-terminal",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "cross platform open terminal and run command",
   "sideEffects": false,
   "keywords": [
@@ -23,7 +23,6 @@
   },
   "files": [
     "es",
-    "scripts",
     "lib",
     "bin"
   ],

@@ -62,6 +62,7 @@
           "proc",
           "pstree",
           "realpath",
+          "shb64",
           "sigar",
           "stdout",
           "terminator",

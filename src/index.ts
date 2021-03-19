@@ -1,10 +1,10 @@
+import Sigar from 'node-sigar';
 import execa, { ExecaError } from 'execa';
 import fs from 'fs-extra';
-import Sigar from 'node-sigar';
-import path from 'path';
 import ora from 'ora';
-import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
 import which from 'which';
+import { v4 as uuidv4 } from 'uuid';
 import { Options, Terminals, Terminal } from '~/types';
 
 const COMMAND = '([{<COMMAND>}])';
@@ -40,12 +40,9 @@ async function getDefaultTerminalCommand(): Promise<string | undefined> {
 }
 
 function createSafeCommand(uid: string, command: string) {
-  const encodedCommand = Buffer.from(command).toString('base64');
-  const BACKSLAH = process.platform === 'darwin' ? '' : '\\';
-  return `node -e 'process.stdout.write(Buffer.from(${BACKSLAH}\`${encodedCommand}${BACKSLAH}\`,${BACKSLAH}\`base64${BACKSLAH}\`))' | sh ${path.resolve(
-    __dirname,
-    '../scripts/sh.sh'
-  )} open-terminal:uid:${uid}`;
+  return `node ${path.resolve(__dirname, '../lib/shb64')} ${Buffer.from(
+    command
+  ).toString('base64')} open-terminal:uid:${uid}`;
 }
 
 async function hasTerminal(terminal: Terminal | string) {
