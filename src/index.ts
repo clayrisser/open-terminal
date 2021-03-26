@@ -19,7 +19,7 @@ export const defaultOptions: Options = {
       ['osascript', '-e', `tell app "Terminal" to do script "${COMMAND}"`]
     ],
     linux: [
-      ['gnome-terminal', '--', `sh -c "${COMMAND}"`],
+      ['gnome-terminal', '--', 'sh', '-c', COMMAND],
       ['xterm', '-e', `sh -c "${COMMAND}"`],
       ['konsole', '-e', `sh -c "${COMMAND}"`],
       ['terminator', '-u', '-e', `sh -c "${COMMAND}"`]
