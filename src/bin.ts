@@ -1,8 +1,14 @@
-import ora from 'ora';
-import openDefaultTerminal from '~/index';
+import openTerminal from "./index.js";
 
-const spinner = ora();
+const command = process.argv.slice(2);
 
-export default (async () => {
-  await openDefaultTerminal(process.argv.slice(2));
-})().catch(spinner.fail);
+if (!command.length) {
+  console.error("usage: open-terminal <command>");
+  process.exit(2);
+}
+
+// The CLI, unlike the library API, is expected to end when the terminal does.
+openTerminal(command, { exitProcess: true }).catch((error: Error) => {
+  console.error(error.message);
+  process.exit(1);
+});

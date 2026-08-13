@@ -1,210 +1,357 @@
-import Sigar from 'node-sigar';
-import execa, { ExecaError } from 'execa';
-import fs from 'fs-extra';
-import ora from 'ora';
-import path from 'path';
-import which from 'which';
-import { v4 as uuidv4 } from 'uuid';
-import { Options, Terminals, Terminal } from '~/types';
-
-const COMMAND = '([{<COMMAND>}])';
-const spinner = ora();
-const sigar = new Sigar();
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import moduleDir from "./moduleDir.js";
+import { pidsMatching, uidToPids } from "./procList.js";
+import {
+  buildTerminalArgv,
+  commandTemplate,
+  defaultTerminals,
+  normalizeTerminal,
+  terminalName,
+} from "./terminals.js";
+import type { Options, Terminal, Terminals } from "./types.js";
+import which, { pathExists } from "./which.js";
 
 export const defaultOptions: Options = {
-  commandTemplate: COMMAND,
+  commandTemplate,
   cwd: process.cwd(),
-  terminals: {
-    darwin: [
-      ['osascript', '-e', `tell app "Terminal" to do script "${COMMAND}"`]
-    ],
-    linux: [
-      ['gnome-terminal', '--', 'sh', '-c', COMMAND],
-      ['xterm', '-e', `sh -c "${COMMAND}"`],
-      ['konsole', '-e', `sh -c "${COMMAND}"`],
-      ['terminator', '-u', '-e', `sh -c "${COMMAND}"`]
-    ]
-  }
+  exitProcess: false,
+  pollInterval: 1000,
+  spawnTimeout: 10000,
+  terminals: defaultTerminals,
 };
 
-async function getDefaultTerminalCommand(): Promise<string | undefined> {
-  try {
-    const REGEX = /[^/]+$/g;
-    const terminalPath = await fs.realpath(await which('x-terminal-emulator'));
-    const command = [...(terminalPath.match(REGEX) || [])]?.[0];
-    return command;
-  } catch (err) {
-    if (err.message.indexOf('not found') > -1) return undefined;
-    throw err;
-  }
+export interface OpenTerminalResult {
+  /** The terminal that was used, or `undefined` when nothing was found. */
+  terminal?: string;
+  argv: string[];
+  exitCode: number | null;
+  /** True when no terminal was available and the command ran headless. */
+  background: boolean;
 }
 
-function createSafeCommand(uid: string, command: string) {
-  if (process.platform === 'darwin') {
-    command = `cd ${process.cwd()} && ${command}`;
-  }
-  return `node ${path.resolve(__dirname, '../lib/shb64')} ${Buffer.from(
-    command
-  ).toString('base64')} open-terminal:uid:${uid}`;
+export interface SafeCommand {
+  /** Ready to spawn without a shell. */
+  argv: string[];
+  /** The same command as one shell-quoted line, for embedding in a terminal's argv. */
+  line: string;
+  /**
+   * Identifies the shim process itself, and nothing else in the chain.
+   *
+   * The uid marker alone is not enough: it also appears in the argv of the
+   * terminal launcher and of every shell between it and the command, because
+   * they are all carrying the command onwards. Those all hold the *quoted*
+   * form, so matching the unquoted argv as the shim itself will report it
+   * picks out the one process that is actually running the command.
+   */
+  needle: string;
 }
 
-async function hasTerminal(terminal: Terminal | string) {
-  const command = Array.isArray(terminal) ? terminal?.[0] || '' : terminal;
-  try {
-    await which(command);
-    return true;
-  } catch (err) {
-    if (err.message.indexOf('not found') > -1) return false;
-    throw err;
-  }
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export default async function openTerminal(
-  command: string | string[],
-  options?: Partial<Options>
-) {
-  return openDefaultTerminal(command, options);
+export function quoteArgument(value: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") return `"${value.split('"').join('""')}"`;
+  return `'${value.split("'").join(`'\\''`)}'`;
 }
 
-async function openDefaultTerminal(
-  command: string | string[],
-  options?: Partial<Options>,
-  _terminals?: Terminal[],
-  _i = 0
-) {
-  const uid = uuidv4();
-  const fullOptions = mergeDefaults(options);
-  if (!_terminals) {
-    const terminals = fullOptions.terminals[process.platform];
-    if (!terminals) {
-      throw new Error(`operating system ${process.platform} not supported`);
-    }
-    const defaultTerminalCommand = await getDefaultTerminalCommand();
-    _terminals = terminals.sort((a: Terminal) => {
-      if ((a[0] || '').indexOf(defaultTerminalCommand || '') > -1) return -1;
-      return 1;
-    });
-  }
-  const safeCommand = createSafeCommand(
-    uid,
-    (Array.isArray(command) ? command : [command]).join(' ')
-  );
-  const terminal = _terminals[_i];
-  if (!terminal) {
-    spinner.warn(
-      `running process in background because terminal could not be found
-try installing on of the following terminals to run correctly: ${_terminals
-        .map((terminal: Terminal) => terminal[0])
-        .join(', ')}
-`
-    );
-    const result = await execa(safeCommand, {
-      cwd: fullOptions.cwd,
-      shell: true,
-      stdio: 'inherit'
-    });
-    return result;
-  }
-  if (!(await hasTerminal(terminal))) {
-    return openDefaultTerminal(command, options, _terminals, ++_i);
-  }
-  try {
-    await tryOpenTerminal(uid, terminal, safeCommand, fullOptions);
-    return process.exit();
-  } catch (err) {
-    const error: ExecaError = err;
-    if (error.command && error.failed) {
-      return openDefaultTerminal(command, options, _terminals, ++_i);
-    }
-    throw err;
-  }
+/** Absolute path to the base64 shim, alongside whichever build is running. */
+export function shimPath(): string {
+  return path.join(moduleDir, "shb64.js");
 }
 
-async function tryOpenTerminal(
+/**
+ * Wrap the command so that it survives being passed through a terminal's argv
+ * and then a shell.
+ *
+ * The command is base64 encoded, which leaves nothing for either layer to
+ * misparse, and the uid marker is appended as a plain argv element so the
+ * spawned process can be found again in the process list.
+ */
+export function createSafeCommand(
   uid: string,
-  terminal: Terminal,
-  command: string | string[],
-  options?: Options
-) {
-  const { commandTemplate, cwd } = mergeDefaults(options);
-  const [cmd] = terminal;
-  if (!cmd) {
-    throw new Error(`terminal ${terminal[0]} not found`);
-  }
-  const [, ...args] = terminal.map((arg: string) =>
-    arg.replace(
-      commandTemplate,
-      Array.isArray(command) ? command.join(' ') : command
-    )
-  );
-  const p = execa(cmd, args, {
-    stdio: 'inherit',
-    cwd
-  });
-  await new Promise((r) => setTimeout(r, 1000));
-  await waitOnTerminal(uid);
-  const result = await p;
-  process.on('SIGINT', () => {
-    const pid = uidToPid(uid);
-    if (pid) process.kill(pid);
-    process.exit();
-  });
-  process.on('SIGTERM', () => {
-    const pid = uidToPid(uid);
-    if (pid) process.kill(pid);
-    process.exit();
-  });
-  return result;
-}
-
-function uidToPid(uid: string) {
-  return sigar.procList.find((pid: number) => {
-    return sigar.getProcArgs(pid).join(' ').indexOf(uid) > -1;
-  });
-}
-
-async function waitOnTerminal(
-  uid: string,
-  pollInterval = 3000,
-  timeout?: number
-) {
-  await new Promise((r) => setTimeout(r, pollInterval));
-  const pid = uidToPid(uid);
-  if (!pid) return undefined;
-  return waitOnTerminal(
-    uid,
-    timeout,
-    typeof timeout === 'undefined' ? timeout : timeout - pollInterval
-  );
-}
-
-function mergeDefaults(options?: Partial<Options>): Options {
+  command: string,
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+  shim: string = shimPath(),
+): SafeCommand {
+  // cd is inside the encoded payload, so the path needs no further escaping at
+  // the terminal layer. /d is required for cmd.exe to cross drive letters.
+  const changeDirectory = platform === "win32" ? "cd /d" : "cd";
+  const script = `${changeDirectory} ${quoteArgument(cwd, platform)} && ${command}`;
+  const argv = [
+    process.execPath,
+    shim,
+    Buffer.from(script).toString("base64"),
+    `open-terminal:uid:${uid}`,
+  ];
   return {
-    ...defaultOptions,
-    ...(options || {}),
-    terminals: {
-      ...defaultOptions.terminals,
-      ...Object.entries(options?.terminals || {}).reduce(
-        (osTerminals: Terminals, [os, terminals]: [string, Terminal[]]) => {
-          osTerminals[os] = (terminals || []).reduce(
-            (terminals: Terminal[], terminal: Terminal) => {
-              if (
-                !terminals.find((existingTerminal: Terminal) => {
-                  return existingTerminal[0] === terminal[0];
-                })
-              ) {
-                terminals.push(terminal);
-              }
-              return terminals;
-            },
-            []
-          );
-          return osTerminals;
-        },
-        {}
-      )
-    }
+    argv,
+    line: [
+      quoteArgument(argv[0], platform),
+      quoteArgument(argv[1], platform),
+      argv[2],
+      argv[3],
+    ].join(" "),
+    needle: argv.slice(1).join(" "),
   };
 }
 
-export * from '~/types';
+/**
+ * The Debian alternatives symlink pointing at whichever terminal the desktop
+ * considers default. Absent on distributions that do not use alternatives.
+ */
+export async function getDefaultTerminalCommand(): Promise<string | undefined> {
+  const resolved = await which("x-terminal-emulator");
+  if (!resolved) return undefined;
+  try {
+    return path.basename(await fs.realpath(resolved));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Move the desktop's default terminal to the front, preserving the relative
+ * order of everything else.
+ */
+export function sortTerminals(terminals: Terminal[], preferred?: string): Terminal[] {
+  if (!preferred) return [...terminals];
+  const matches = terminals.filter((terminal: Terminal) =>
+    preferred.startsWith(terminalName(terminal)),
+  );
+  if (!matches.length) return [...terminals];
+  return [...matches, ...terminals.filter((terminal: Terminal) => !matches.includes(terminal))];
+}
+
+export async function isTerminalAvailable(
+  terminal: Terminal,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  for (const requirement of normalizeTerminal(terminal).requires) {
+    const isPath = requirement.includes("/") || requirement.includes("\\");
+    if (isPath ? await pathExists(requirement) : await which(requirement, platform)) return true;
+  }
+  return false;
+}
+
+/**
+ * Kill whatever the uid marker points at when this process is interrupted.
+ *
+ * Registering before the wait is what makes this work at all; releases before
+ * 0.2 installed these handlers after awaiting the terminal, by which time
+ * there was nothing left to forward to.
+ */
+function forwardSignals(uid: string, child: ChildProcess, platform: NodeJS.Platform): () => void {
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+  const handler = (signal: NodeJS.Signals) => {
+    void (async () => {
+      for (const pid of await uidToPids(uid, platform)) {
+        try {
+          process.kill(pid, signal);
+        } catch {
+          // Already gone.
+        }
+      }
+      if (child.pid) {
+        try {
+          process.kill(child.pid, signal);
+        } catch {
+          // Already gone.
+        }
+      }
+      // Installing a handler suppresses Node's default termination, so the
+      // exit has to be explicit.
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    })();
+  };
+  for (const signal of signals) process.on(signal, handler);
+  return () => {
+    for (const signal of signals) process.off(signal, handler);
+  };
+}
+
+function waitForLaunch(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  });
+}
+
+function waitForExit(child: ChildProcess): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+}
+
+class TerminalLaunchError extends Error {
+  constructor(terminal: string, exitCode: number) {
+    super(`terminal ${terminal} exited with code ${exitCode} without opening`);
+    this.name = "TerminalLaunchError";
+  }
+}
+
+async function runTerminal(
+  uid: string,
+  terminal: Terminal,
+  safeCommand: SafeCommand,
+  options: Options,
+  platform: NodeJS.Platform,
+): Promise<OpenTerminalResult> {
+  const argv = buildTerminalArgv(terminal, safeCommand.line, options.commandTemplate);
+  const [command, ...args] = argv;
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    stdio: "inherit",
+    // Windows only gives a child its own console window when it is detached.
+    detached: platform === "win32",
+    windowsHide: false,
+  });
+  const stopForwarding = forwardSignals(uid, child, platform);
+  try {
+    await waitForLaunch(child);
+    const exited = waitForExit(child);
+    let hasExited = false;
+    let exitedAt = 0;
+    let exitCode: number | null = null;
+    const noteExit = (code: number | null) => {
+      hasExited = true;
+      exitedAt = Date.now();
+      exitCode = code;
+    };
+    void exited.then(noteExit, () => noteExit(null));
+
+    // Daemon-backed terminals such as gnome-terminal hand control back before
+    // their window exists, which is the whole reason the tagged process is
+    // tracked at all. Terminals that stay in the foreground have instead
+    // already finished by the time their launcher exits, so once it is gone
+    // only a short grace period is worth waiting: anything longer would stall
+    // every short-lived command by the full spawn timeout.
+    const appearGrace = Math.max(options.pollInterval * 3, 500);
+    const deadline = Date.now() + options.spawnTimeout;
+    let appeared = false;
+    for (;;) {
+      if ((await pidsMatching(safeCommand.needle, platform)).length) {
+        appeared = true;
+        break;
+      }
+      // A launcher that failed outright (no display, bad profile) should fall
+      // through to the next terminal immediately.
+      if (hasExited && (exitCode || Date.now() - exitedAt >= appearGrace)) break;
+      if (Date.now() >= deadline) break;
+      await delay(options.pollInterval);
+    }
+
+    // Then wait for it to finish.
+    if (appeared) {
+      while ((await pidsMatching(safeCommand.needle, platform)).length) {
+        await delay(options.pollInterval);
+      }
+    }
+
+    const finalExitCode = await exited;
+    if (!appeared && finalExitCode) {
+      throw new TerminalLaunchError(terminalName(terminal), finalExitCode);
+    }
+    return { terminal: terminalName(terminal), argv, exitCode: finalExitCode, background: false };
+  } finally {
+    stopForwarding();
+  }
+}
+
+async function runInBackground(
+  safeCommand: SafeCommand,
+  options: Options,
+): Promise<OpenTerminalResult> {
+  const [command, ...args] = safeCommand.argv;
+  const child = spawn(command, args, { cwd: options.cwd, stdio: "inherit" });
+  await waitForLaunch(child);
+  return {
+    argv: safeCommand.argv,
+    exitCode: await waitForExit(child),
+    background: true,
+  };
+}
+
+export function mergeDefaults(options?: Partial<Options>): Options {
+  const terminals: Terminals = { ...defaultOptions.terminals };
+  for (const [platform, overrides] of Object.entries(options?.terminals || {})) {
+    // Dedupe by executable so a caller adding one terminal does not have to
+    // restate the built-in list.
+    terminals[platform] = (overrides || []).reduce((unique: Terminal[], terminal: Terminal) => {
+      if (!unique.some((existing: Terminal) => terminalName(existing) === terminalName(terminal)))
+        unique.push(terminal);
+      return unique;
+    }, []);
+  }
+  return {
+    ...defaultOptions,
+    ...options,
+    cwd: options?.cwd || process.cwd(),
+    terminals,
+  };
+}
+
+/**
+ * Open a terminal emulator window and run `command` inside it.
+ *
+ * Falls back through the platform's terminal list, and finally runs the
+ * command headless if none of them is installed.
+ */
+export default async function openTerminal(
+  command: string | string[],
+  options?: Partial<Options>,
+): Promise<OpenTerminalResult> {
+  const fullOptions = mergeDefaults(options);
+  const platform = process.platform;
+  const terminals = fullOptions.terminals[platform];
+  if (!terminals?.length) {
+    throw new Error(`operating system ${platform} not supported`);
+  }
+  const uid = randomUUID();
+  const safeCommand = createSafeCommand(
+    uid,
+    (Array.isArray(command) ? command : [command]).join(" "),
+    fullOptions.cwd,
+    platform,
+  );
+  const ordered = sortTerminals(
+    terminals,
+    platform === "linux" ? await getDefaultTerminalCommand() : undefined,
+  );
+
+  for (const terminal of ordered) {
+    if (!(await isTerminalAvailable(terminal, platform))) continue;
+    try {
+      const result = await runTerminal(uid, terminal, safeCommand, fullOptions, platform);
+      if (fullOptions.exitProcess) process.exit(result.exitCode ?? 0);
+      return result;
+    } catch (error) {
+      // A terminal that is installed but refuses to start should not stop the
+      // rest of the list from being tried.
+      if (error instanceof TerminalLaunchError) continue;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EACCES") continue;
+      throw error;
+    }
+  }
+
+  console.warn(
+    `running process in background because no terminal could be found
+try installing one of the following terminals to run correctly: ${ordered
+      .map(terminalName)
+      .join(", ")}`,
+  );
+  const result = await runInBackground(safeCommand, fullOptions);
+  if (fullOptions.exitProcess) process.exit(result.exitCode ?? 0);
+  return result;
+}
+
+export { defaultTerminals, commandTemplate, buildTerminalArgv, normalizeTerminal, terminalName };
+export { pidsMatching, uidToPid, uidToPids } from "./procList.js";
+export type { ProcessEntry } from "./procList.js";
+export * from "./types.js";

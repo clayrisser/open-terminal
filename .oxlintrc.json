@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "node": true,
+    "es2024": true
+  },
+  "ignorePatterns": ["es", "lib", "coverage", "node_modules"],
+  "rules": {
+    "no-console": "off",
+    // This library is built out of sequential probes: PATH is searched in
+    // order because the first match wins, and the process list is polled
+    // because that is what waiting means. Parallelising either would be wrong.
+    "no-await-in-loop": "off"
+  }
+}
