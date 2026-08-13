@@ -46,7 +46,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   `core-js` and `@babel/runtime` were replaced with the Node standard library,
   and the unused `node-pstree` dependency was dropped.
 - Built with `tsc` instead of babel and webpack; `lib/` stays CommonJS and
-  `es/` is now genuinely ESM.
+  `es/` is now genuinely ESM, each carrying type declarations in its own module
+  format so an ESM consumer no longer resolves CommonJS types.
 - `xterm` moved to the end of the Linux list. It is usually installed as
   somebody else's dependency rather than chosen, so it makes a better fallback
   than a preference.
