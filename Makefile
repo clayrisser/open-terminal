@@ -1,197 +1,100 @@
-include silicon.mk
+.POSIX:
+export ROOTDIR ?= $(eval ROOTDIR := $(shell git rev-parse --show-toplevel))$(ROOTDIR)
+include $(ROOTDIR)/make.mk
 
-BABEL := node_modules/.bin/babel
-BABEL_NODE := node_modules/.bin/babel-node
-CLOC := node_modules/.bin/cloc
-CSPELL := node_modules/.bin/cspell
-ESLINT := node_modules/.bin/eslint
-JEST := node_modules/.bin/jest
-LOCKFILE_LINT := node_modules/.bin/lockfile-lint
-MAJESTIC := node_modules/.bin/majestic
-PRETTIER := node_modules/.bin/prettier
-TSC := node_modules/.bin/tsc
-WEBPACK := node_modules/.bin/webpack
-COLLECT_COVERAGE_FROM := ["src/**/*.{js,jsx,ts,tsx}"]
+.DEFAULT_GOAL := build
 
-BUILD_DEPS := $(patsubst src/%.ts,lib/%.d.ts,$(shell find src -name '*.ts' -not -name '*.d.ts')) \
-	$(patsubst src/%.tsx,lib/%.d.ts,$(shell find src -name '*.tsx'))
-BUILD_TARGET := $(BUILD_DEPS) lib
+ASDF_VERSION ?= v0.18.0
 
-FORMAT_DEPS := $(patsubst %,$(DONE)/_format/%,$(shell $(GIT) ls-files 2>$(NULL) | grep -E "\.((json)|(ya?ml)|(md)|([jt]sx?))$$"))
-FORMAT_TARGET := $(FORMAT_DEPS) $(DONE)/format
+.PHONY: prepare prepare/asdf prepare/cloc
+prepare: sudo
+	@command -v asdf >/dev/null 2>&1 || $(MAKE) prepare/asdf
+	@command -v $(CLOC) >/dev/null 2>&1 || $(MAKE) prepare/cloc
+	@awk '!/^#/ && NF {print $$1}' .tool-versions | \
+		while read t; do asdf plugin add "$$t" 2>/dev/null || true; done
+	@rcfile=$$(mktemp); \
+		{ asdf install 2>&1; echo $$? >$$rcfile; } | grep --line-buffered -v 'is already installed' || true; \
+		rc=$$(cat $$rcfile); rm -f $$rcfile; exit $$rc
+	@$(PNPM) install
+prepare/asdf:
+	@command -v brew >/dev/null 2>&1 && brew install asdf || { \
+		o=$$(uname | tr A-Z a-z); a=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
+		curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/$(ASDF_VERSION)/asdf-$(ASDF_VERSION)-$$o-$$a.tar.gz" \
+			| $(SUDO) tar -xz -C /usr/local/bin asdf; \
+	}
+prepare/cloc:
+	@$(PKG_INSTALL) cloc
 
-LINT_DEPS := $(patsubst %,$(DONE)/_lint/%,$(shell $(GIT) ls-files 2>$(NULL) | grep -E "\.([jt]sx?)$$"))
-LINT_TARGET := $(LINT_DEPS) $(DONE)/lint
+.PHONY: configure
+configure:
+	@for cmd in $(PNPM) node; do \
+		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd is missing, run \`make prepare\`"; exit 1; }; \
+	done
+	@[ -d node_modules ] || $(PNPM) install
 
-SPELLCHECK_DEPS := $(patsubst %,$(DONE)/_spellcheck/%,$(shell $(GIT) ls-files 2>$(NULL) | $(GIT) ls-files | grep -E "\.(md)$$"))
-SPELLCHECK_TARGET := $(SPELLCHECK_DEPS) $(DONE)/spellcheck
+.PHONY: build
+build: configure
+	@$(TSC) -p tsconfig.cjs.json
+	@$(TSC) -p tsconfig.esm.json
+	@cp src/moduleDir.cjs lib/moduleDir.js
+	@cp src/moduleDir.mjs es/moduleDir.js
+	@# es/ ships ESM while the package root is CommonJS, so the subtree needs
+	@# its own type marker or node reads es/*.js as CommonJS.
+	@echo '{"type":"module"}' > es/package.json
 
-TEST_DEPS := $(patsubst %,$(DONE)/_test/%,$(shell $(GIT) ls-files 2>$(NULL) | grep -E "\.([jt]sx?)$$"))
-TEST_TARGET := $(TEST_DEPS) $(DONE)/test
+.PHONY: test
+test: test/unit
 
-.PHONY: all
-all: build
+# Coverage is always on: the text reporter documents the run in CI logs and the
+# lcov file is what sonar-scanner ingests.
+.PHONY: test/unit
+test/unit: configure
+	@$(VITEST) run --coverage --coverage.reporter=text --coverage.reporter=lcov
 
-.PHONY: install +install _install ~install
-install: _install ~install
-~install: $(DONE)/install
-+install: _install $(DONE)/install
-_install:
-	-@rm -rf $(DONE)/install $(NOFAIL)
-$(DONE)/install: package.json
-	@$(NPM) install
-	@$(call done,install)
+.PHONY: test/e2e
+test/e2e: configure build
+	@cd tests/e2e && export PROJECT_ROOT=$(ROOTDIR) && \
+		trap './teardown.sh' EXIT INT TERM; \
+		./setup.sh && $(BATS) .
 
-.PHONY: prepare
-prepare:
-	@
+# shfmt cannot parse bats's `@test "name" {` syntax, so the suite is scoped to
+# real shell scripts. An empty list has to short-circuit: with no file
+# arguments shfmt reads stdin instead.
+_SHFMT = files=$$($(GIT) ls-files '*.sh'); [ -z "$$files" ] || $(SHFMT)
 
-.PHONY: upgrade
-upgrade:
-	@$(NPM) upgrade --latest
+.PHONY: format
+format: configure
+	@$(OXFMT) src tests
+	@$(_SHFMT) -w -i 2 -ci $$files
 
-.PHONY: inc
-inc:
-	@npm version patch --git=false $(NOFAIL)
-
-.PHONY: format +format _format ~format
-format: _format ~format
-~format: ~install $(FORMAT_TARGET)
-+format: _format $(FORMAT_TARGET)
-_format:
-	-@rm -rf $(DONE)/_format $(NOFAIL)
-$(DONE)/format:
-	@for i in $$($(call get_deps,format)); do echo $$i | \
-		grep -E "\.[jt]sx?$$"; done | xargs $(ESLINT) --fix >/dev/null ||true
-	@$(PRETTIER) --write $(shell $(call get_deps,format))
-	@$(call reset_deps,format)
-	@$(call done,format)
-$(DONE)/_format/%: %
-	-@rm $(DONE)/format $(NOFAIL)
-	@$(call add_dep,format,$<)
-	@$(call add_cache,$@)
-
-.PHONY: spellcheck +spellcheck _spellcheck ~spellcheck
-spellcheck: _spellcheck ~spellcheck
-~spellcheck: ~format $(SPELLCHECK_TARGET)
-+spellcheck: _spellcheck $(SPELLCHECK_TARGET)
-_spellcheck:
-	-@rm -rf $(DONE)/_spellcheck $(NOFAIL)
-$(DONE)/spellcheck:
-	-@$(CSPELL) --config .cspellrc $(shell $(call get_deps,spellcheck))
-	@$(call reset_deps,spellcheck)
-	@$(call done,spellcheck)
-$(DONE)/_spellcheck/%: %
-	-@rm $(DONE)/spellcheck $(NOFAIL)
-	@$(call add_dep,spellcheck,$<)
-	@$(call add_cache,$@)
-
-.PHONY: lint +lint _lint ~lint
-lint: _lint ~lint
-~lint: ~spellcheck $(LINT_TARGET)
-+lint: _lint $(LINT_TARGET)
-_lint:
-	-@rm -rf $(DONE)/_lint $(NOFAIL)
-$(DONE)/lint:
-#	-@$(LOCKFILE_LINT) --type npm --path package-lock.json --validate-https
-	-@$(ESLINT) -f json -o node_modules/.tmp/eslintReport.json $(shell $(call get_deps,lint)) $(NOFAIL)
-	-@$(ESLINT) $(shell $(call get_deps,lint))
-	@$(call reset_deps,lint)
-	@$(call done,lint)
-$(DONE)/_lint/%: %
-	-@rm $(DONE)/lint $(NOFAIL)
-	@$(call add_dep,lint,$<)
-	@$(call add_cache,$@)
-
-.PHONY: test +test _test ~test
-test: _test ~test
-~test: ~lint $(TEST_TARGET)
-+test: _test $(TEST_TARGET)
-_test:
-	-@rm -rf $(DONE)/_test $(NOFAIL)
-$(DONE)/test:
-	-@$(JEST) --json --outputFile=node_modules/.tmp/jestTestResults.json --coverage \
-		--coverageDirectory=node_modules/.tmp/coverage --testResultsProcessor=jest-sonar-reporter \
-		--collectCoverageFrom='$(COLLECT_COVERAGE_FROM)' --findRelatedTests $(shell $(call get_deps,test))
-	@$(call reset_deps,test)
-	@$(call done,test)
-$(DONE)/_test/%: %
-	-@rm $(DONE)/test $(NOFAIL)
-	@$(call add_dep,test,$<)
-	@$(call add_cache,$@)
-
-.PHONY: build +build _build ~build
-build: _build ~build
-~build: ~test $(BUILD_TARGET)
-+build: _build $(BUILD_TARGET)
-_build:
-	-@rm -rf es lib $(NOFAIL)
-lib:
-#	@$(WEBPACK)
-	@$(BABEL) --env-name umd src -d lib --extensions '.js,.jsx,.ts,.tsx' --source-maps
-	@$(BABEL) --env-name esm src -d es --extensions '.js,.jsx,.ts,.tsx' --source-maps
-	@$(TSC) -p tsconfig.app.json -d --emitDeclarationOnly
-
-.PHONY: publish +publish
-publish: build
-	@$(MAKE) -s +publish
-+publish:
-	@$(NPM) publish
-
-.PHONY: pack +pack
-pack: build
-	@$(MAKE) -s +pack
-+pack:
-	@$(NPM) pack
-
-.PHONY: coverage
-coverage: ~lint
-	@$(MAKE) -s +coverage
-+coverage:
-	@$(JEST) --coverage --collectCoverageFrom='$(COLLECT_COVERAGE_FROM)' $(ARGS)
-
-.PHONY: test-ui
-test-ui: ~lint
-	@$(MAKE) -s +test-ui
-+test-ui:
-	@$(MAJESTIC) $(ARGS)
-
-.PHONY: test-watch
-test-watch: ~lint
-	@$(MAKE) -s +test-watch
-+test-watch:
-	@$(JEST) --watch $(ARGS)
-
-.PHONY: start +start
-start: ~format
-	@$(MAKE) -s +start
-+start:
-	@$(BABEL_NODE) --extensions '.ts,.tsx' src/bin "$(ARGS)"
-
-.PHONY: clean
-clean:
-	-@$(JEST) --clearCache $(NOFAIL)
-	-@$(GIT) clean -fXd \
-		-e $(BANG)/node_modules \
-		-e $(BANG)/node_modules/**/* \
-		-e $(BANG)/package-lock.json \
-		-e $(BANG)/pnpm-lock.yaml \
-		-e $(BANG)/yarn.lock $(NOFAIL)
-	-@rm -rf node_modules/.cache $(NOFAIL)
-	-@rm -rf node_modules/.make $(NOFAIL)
-	-@rm -rf node_modules/.tmp $(NOFAIL)
-
-.PHONY: purge
-purge: clean
-	-@$(GIT) clean -fXd
+.PHONY: lint
+lint: configure
+	@$(OXFMT) --check src tests
+	@$(OXLINT) src tests
+	@$(TSC) -p tsconfig.lint.json
+	@$(_SHFMT) -d -i 2 -ci $$files
 
 .PHONY: count
 count:
-	@$(CLOC) $(shell $(GIT) ls-files)
+	@$(CLOC) $$($(GIT) ls-files)
 
-.PHONY: report
-report: spellcheck lint test
-	@
+.PHONY: docker docker/%
+docker: FORCE
+	@$(MAKE) -C docker
+docker/%: FORCE
+	@$(MAKE) -C docker $*
 
-%:
-	@
+.PHONY: publish pack
+publish: build
+	@$(PNPM) publish --access public
+pack: build
+	@$(PNPM) pack
+
+.PHONY: clean
+clean:
+	@rm -rf coverage es lib
+	@rm -rf node_modules/.make node_modules/.vite
+
+.PHONY: purge
+purge: clean
+	@$(GIT) clean -fxd

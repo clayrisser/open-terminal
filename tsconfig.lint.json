@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    // The tests run under vitest as ESM, so they are checked with bundler
+    // semantics. src is still checked exactly as it builds, by tsconfig.cjs.json.
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "tests", "vitest.config.mts"]
+}
