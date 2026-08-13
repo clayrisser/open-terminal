@@ -22,6 +22,13 @@ afterEach(async () => {
 // Poll fast so the suite is not dominated by the default one second interval.
 const fastPolling = { pollInterval: 100, spawnTimeout: 15000 };
 
+// The timing assertions below allow 5000ms, which is exactly vitest's default
+// test timeout, so a slow machine hit the harness limit first and reported an
+// opaque timeout instead of the assertion. The harness needs headroom above the
+// budget for the assertion to be what reports the failure.
+const timingBudget = 5000;
+const timingHeadroom = { timeout: timingBudget * 3 };
+
 async function scratchFile(name: string): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "open-terminal-out-"));
   cleanups.push(() => fs.rm(directory, { recursive: true, force: true }));
@@ -85,7 +92,7 @@ describe("openTerminal end to end through a fake terminal", () => {
     expect(await fs.readFile(proof, "utf8")).toBe("ran");
   });
 
-  it("moves on when a terminal is installed but refuses to start", async () => {
+  it("moves on when a terminal is installed but refuses to start", timingHeadroom, async () => {
     const broken = await createFakeTerminal("brokenterm", "fail");
     const working = await createFakeTerminal("workingterm", "run");
     cleanups.push(broken.cleanup, working.cleanup);
@@ -107,7 +114,7 @@ describe("openTerminal end to end through a fake terminal", () => {
     expect(await fs.readFile(proof, "utf8")).toBe("recovered");
     // The failure has to be noticed from the exit code rather than by waiting
     // out the spawn timeout.
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(timingBudget);
     // The broken terminal really was attempted first.
     expect((await broken.argv())[0]).toBe("-e");
   });
@@ -129,22 +136,26 @@ describe("openTerminal end to end through a fake terminal", () => {
     expect(warn.mock.calls[0][0]).toContain("definitely-not-installed");
   });
 
-  it("returns promptly for a command that finishes before the first poll", async () => {
-    const fake = await createFakeTerminal("faketerm", "run");
-    cleanups.push(fake.cleanup, withPath(fake.bin));
-    const proof = await scratchFile("proof");
+  it(
+    "returns promptly for a command that finishes before the first poll",
+    timingHeadroom,
+    async () => {
+      const fake = await createFakeTerminal("faketerm", "run");
+      cleanups.push(fake.cleanup, withPath(fake.bin));
+      const proof = await scratchFile("proof");
 
-    const started = Date.now();
-    await openTerminal(`printf quick > ${proof}`, {
-      pollInterval: 100,
-      // A long timeout must not become the floor for a short command.
-      spawnTimeout: 30000,
-      terminals: { [process.platform]: [["faketerm", "-e", "sh", "-c", commandTemplate]] },
-    });
+      const started = Date.now();
+      await openTerminal(`printf quick > ${proof}`, {
+        pollInterval: 100,
+        // A long timeout must not become the floor for a short command.
+        spawnTimeout: 30000,
+        terminals: { [process.platform]: [["faketerm", "-e", "sh", "-c", commandTemplate]] },
+      });
 
-    expect(await fs.readFile(proof, "utf8")).toBe("quick");
-    expect(Date.now() - started).toBeLessThan(5000);
-  });
+      expect(await fs.readFile(proof, "utf8")).toBe("quick");
+      expect(Date.now() - started).toBeLessThan(timingBudget);
+    },
+  );
 
   it("accepts an argv array as well as a string", async () => {
     const fake = await createFakeTerminal("faketerm", "run");
